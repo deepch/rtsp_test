@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"encoding/hex"
 
 	"github.com/nareix/mp4"
 )
@@ -21,24 +22,24 @@ func main() {
 	// 1 sec = timestamp 90000
 	timeScale := 90000
 
-	type Sample struct {
+	type NALU struct {
 		ts int
 		data []byte
 		sync bool
 	}
-	var lastSample *Sample
+	var lastNALU *NALU
 
 	var mp4w *mp4.SimpleH264Writer
 	outfile, _ := os.Create("out.mp4")
 
-	endWrite := func() {
+	endWriteNALU := func() {
 		log.Println("finish write")
 		if err := mp4w.Finish(); err != nil {
 			panic(err)
 		}
 	}
 
-	writeSample := func(sync bool, ts int, payload []byte) {
+	writeNALU := func(sync bool, ts int, payload []byte) {
 		if mp4w == nil {
 			mp4w = &mp4.SimpleH264Writer{
 				SPS: sps,
@@ -47,21 +48,23 @@ func main() {
 				W: outfile,
 			}
 		}
-		curSample := &Sample{
+		curNALU := &NALU{
 			ts: ts,
 			sync: sync,
 			data: payload,
 		}
-		if lastSample != nil {
+
+		log.Println(hex.Dump(payload))
+		if lastNALU != nil {
 			log.Println("write", len(payload))
-			if err := mp4w.WriteSample(lastSample.sync, curSample.ts - lastSample.ts, lastSample.data); err != nil {
-				panic(err)
-			}
+			//if err := mp4w.WriteNALU(lastNALU.sync, curNALU.ts - lastNALU.ts, lastNALU.data); err != nil {
+			//	panic(err)
+			//}
 		}
-		lastSample = curSample
+		lastNALU = curNALU
 	}
 
-	handleNalU := func(nalType byte, payload []byte, ts int64) {
+	handleNALU := func(nalType byte, payload []byte, ts int64) {
 		if nalType == 7 {
 			sps = payload
 		} else if nalType == 8 {
@@ -72,11 +75,11 @@ func main() {
 			if syncCount == 3 {
 				quit = true
 			}
-			writeSample(true, int(ts), payload)
+			writeNALU(true, int(ts), payload)
 		} else {
 			// non-keyframe
 			if syncCount > 0 {
-				writeSample(false, int(ts), payload)
+				writeNALU(false, int(ts), payload)
 			}
 		}
 	}
@@ -110,13 +113,13 @@ func main() {
 					nalType := data[4+rtphdr] & 0x1F
 
 					if nalType >= 1 && nalType <= 23 {
-						handleNalU(nalType, data[4+rtphdr:], ts)
+						handleNALU(nalType, data[4+rtphdr:], ts)
 					} else if nalType == 28 {
 						fuBuffer = append(fuBuffer, data[4+rtphdr+2:]...)
 						isEnd := data[4+rtphdr+1]&0x40 != 0
 						nalType := data[4+rtphdr+1]&0x1F
 						if isEnd {
-							handleNalU(nalType, fuBuffer, ts)
+							handleNALU(nalType, fuBuffer, ts)
 							fuBuffer = []byte{}
 						}
 					}
@@ -131,6 +134,6 @@ func main() {
 		log.Println("error", message)
 	}
 
-	endWrite()
+	endWriteNALU()
 	RtspReader.Close()
 }
