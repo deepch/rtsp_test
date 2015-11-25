@@ -47,6 +47,7 @@ func main() {
 				TimeScale: timeScale,
 				W: outfile,
 			}
+			log.Println("SPS:\n"+hex.Dump(sps), "\nPPS:\n"+hex.Dump(pps))
 		}
 		curNALU := &NALU{
 			ts: ts,
@@ -54,12 +55,12 @@ func main() {
 			data: payload,
 		}
 
-		log.Println(hex.Dump(payload))
+		//log.Println(hex.Dump(payload))
 		if lastNALU != nil {
 			log.Println("write", len(payload))
-			//if err := mp4w.WriteNALU(lastNALU.sync, curNALU.ts - lastNALU.ts, lastNALU.data); err != nil {
-			//	panic(err)
-			//}
+			if err := mp4w.WriteNALU(lastNALU.sync, curNALU.ts - lastNALU.ts, lastNALU.data); err != nil {
+				panic(err)
+			}
 		}
 		lastNALU = curNALU
 	}
