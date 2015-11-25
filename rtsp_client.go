@@ -219,7 +219,10 @@ func (this *RtspClient) RtspRtpLoop() {
 				}
 			*/
 		}
-		if n, err := io.ReadFull(this.socket, payload[:(int)(header[2])<<8+(int)(header[3])]); err != nil {
+
+		payloadLen := (int)(header[2])<<8+(int)(header[3])
+		//log.Println("payloadLen", payloadLen)
+		if n, err := io.ReadFull(this.socket, payload[:payloadLen]); err != nil {
 			return
 		} else {
 			this.outgoing <- append(header, payload[:n]...)

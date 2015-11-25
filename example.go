@@ -3,30 +3,91 @@ package main
 import (
 	"log"
 	"os"
+
+	"github.com/nareix/mp4"
 )
 
 func main() {
 	RtspReader := RtspClientNew()
-	//wait keyframe
-	wait := true
-	//sps string
-	sps := ""
-	//pps string
-	pps := ""
-	//bufer string from test
-	bufer := ""
-	//create file
-	file, err := os.Create("test.h264") // For read access.
-	if err != nil {
-		log.Fatal(err)
+
+	quit := false
+
+	sps := []byte{}
+	pps := []byte{}
+	fuBuffer := []byte{}
+	syncCount := 0
+
+	// rtp timestamp: 90 kHz clock rate
+	// 1 sec = timestamp 90000
+	timeScale := 90000
+
+	type Sample struct {
+		ts int
+		data []byte
+		sync bool
 	}
-	if status, message := RtspReader.Client("rtsp://admin:123456@171.25.235.18/mpeg4"); status {
+	var lastSample *Sample
+
+	var mp4w *mp4.SimpleH264Writer
+	outfile, _ := os.Create("out.mp4")
+
+	endWrite := func() {
+		log.Println("finish write")
+		if err := mp4w.Finish(); err != nil {
+			panic(err)
+		}
+	}
+
+	writeSample := func(sync bool, ts int, payload []byte) {
+		if mp4w == nil {
+			mp4w = &mp4.SimpleH264Writer{
+				SPS: sps,
+				PPS: pps,
+				TimeScale: timeScale,
+				W: outfile,
+			}
+		}
+		curSample := &Sample{
+			ts: ts,
+			sync: sync,
+			data: payload,
+		}
+		if lastSample != nil {
+			log.Println("write", len(payload))
+			if err := mp4w.WriteSample(lastSample.sync, curSample.ts - lastSample.ts, lastSample.data); err != nil {
+				panic(err)
+			}
+		}
+		lastSample = curSample
+	}
+
+	handleNalU := func(nalType byte, payload []byte, ts int64) {
+		if nalType == 7 {
+			sps = payload
+		} else if nalType == 8 {
+			pps = payload
+		} else if nalType == 5 {
+			// keyframe
+			syncCount++
+			if syncCount == 3 {
+				quit = true
+			}
+			writeSample(true, int(ts), payload)
+		} else {
+			// non-keyframe
+			if syncCount > 0 {
+				writeSample(false, int(ts), payload)
+			}
+		}
+	}
+
+	if status, message := RtspReader.Client("rtsp://admin:123456@94.242.52.34:5543/mpeg4cif"); status {
 		log.Println("connected")
 		i := 0
 		for {
 			i++
 			//read 100 frame and exit loop
-			if i == 100 {
+			if quit {
 				break
 			}
 			select {
@@ -36,54 +97,40 @@ func main() {
 					cc := data[4] & 0xF
 					//rtp header
 					rtphdr := 12 + cc*4
+
 					//packet time
 					ts := (int64(data[8]) << 24) + (int64(data[9]) << 16) + (int64(data[10]) << 8) + (int64(data[11]))
 
 					//packet number
 					packno := (int64(data[6]) << 8) + int64(data[7])
-					log.Println("packet num", packno)
+					if false {
+						log.Println("packet num", packno)
+					}
+
 					nalType := data[4+rtphdr] & 0x1F
-					//nal
-					nal := data[4+rtphdr]&0xE0 | data[4+rtphdr+1]&0x1F
-					//srart fragment packet
-					pstart := data[4+rtphdr+1]&0x80 != 0
-					//end fragment packet
-					pend := data[4+rtphdr+1]&0x40 != 0
-					if nalType == 7 {
-						sps = string(data[4+rtphdr:])
-					} else if nalType == 8 {
-						pps = string(data[4+rtphdr:])
-						wait = false
+
+					if nalType >= 1 && nalType <= 23 {
+						handleNalU(nalType, data[4+rtphdr:], ts)
 					} else if nalType == 28 {
-						if !wait {
-							if pstart {
-								bufer = bufer + string(data[4+rtphdr+2:])
-							} else if pend {
-								bufer = bufer + string(data[4+rtphdr+2:])
-								if nal == 101 {
-									//write key frame h264 format
-									log.Println("packet ts", ts)
-									file.Write([]byte("\000\000\001" + sps + "\000\000\001" + pps + "\000\000\001" + string(nal) + bufer))
-								} else {
-									//write not key frame h264 format
-									log.Println("packet ts", ts)
-									file.Write([]byte("\000\000\001" + string(nal) + bufer))
-								}
-								bufer = ""
-							} else {
-								bufer = bufer + string(data[4+rtphdr+2:])
-							}
+						fuBuffer = append(fuBuffer, data[4+rtphdr+2:]...)
+						isEnd := data[4+rtphdr+1]&0x40 != 0
+						nalType := data[4+rtphdr+1]&0x1F
+						if isEnd {
+							handleNalU(nalType, fuBuffer, ts)
+							fuBuffer = []byte{}
 						}
 					}
+
 				}
+
 			case <-RtspReader.signals:
 				log.Println("exit signal by class rtsp")
 			}
 		}
 	} else {
 		log.Println("error", message)
-		return
 	}
+
+	endWrite()
 	RtspReader.Close()
-	file.Close()
 }
