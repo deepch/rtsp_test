@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"os"
-	"encoding/hex"
 
 	"github.com/nareix/mp4"
 )
@@ -47,17 +46,15 @@ func main() {
 				TimeScale: timeScale,
 				W: outfile,
 			}
-			log.Println("SPS:\n"+hex.Dump(sps), "\nPPS:\n"+hex.Dump(pps))
+			//log.Println("SPS:\n"+hex.Dump(sps), "\nPPS:\n"+hex.Dump(pps))
 		}
 		curNALU := &NALU{
 			ts: ts,
 			sync: sync,
 			data: payload,
 		}
-
-		//log.Println(hex.Dump(payload))
 		if lastNALU != nil {
-			log.Println("write", len(payload))
+			log.Println("write", lastNALU.sync, len(lastNALU.data))
 			if err := mp4w.WriteNALU(lastNALU.sync, curNALU.ts - lastNALU.ts, lastNALU.data); err != nil {
 				panic(err)
 			}
@@ -67,13 +64,17 @@ func main() {
 
 	handleNALU := func(nalType byte, payload []byte, ts int64) {
 		if nalType == 7 {
-			sps = payload
+			if len(sps) == 0 {
+				sps = payload
+			}
 		} else if nalType == 8 {
-			pps = payload
+			if len(pps) == 0 {
+				pps = payload
+			}
 		} else if nalType == 5 {
 			// keyframe
 			syncCount++
-			if syncCount == 3 {
+			if syncCount == 5 {
 				quit = true
 			}
 			writeNALU(true, int(ts), payload)
@@ -116,12 +117,18 @@ func main() {
 					if nalType >= 1 && nalType <= 23 {
 						handleNALU(nalType, data[4+rtphdr:], ts)
 					} else if nalType == 28 {
-						fuBuffer = append(fuBuffer, data[4+rtphdr+2:]...)
+						isStart := data[4+rtphdr+1]&0x80 != 0
 						isEnd := data[4+rtphdr+1]&0x40 != 0
 						nalType := data[4+rtphdr+1]&0x1F
+						nri := (data[4+rtphdr+1]&0x60)>>5
+
+						if isStart {
+							fuBuffer = []byte{0}
+						}
+						fuBuffer = append(fuBuffer, data[4+rtphdr+2:]...)
 						if isEnd {
+							fuBuffer[0] = nalType|(nri<<5)|0x80
 							handleNALU(nalType, fuBuffer, ts)
-							fuBuffer = []byte{}
 						}
 					}
 
