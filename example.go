@@ -7,6 +7,11 @@ import (
 	"github.com/nareix/mp4"
 )
 
+var (
+	VideoWidth int
+	VideoHeight int
+)
+
 func main() {
 	RtspReader := RtspClientNew()
 
@@ -33,8 +38,10 @@ func main() {
 
 	endWriteNALU := func() {
 		log.Println("finish write")
-		if err := mp4w.Finish(); err != nil {
-			panic(err)
+		if mp4w != nil {
+			if err := mp4w.Finish(); err != nil {
+				panic(err)
+			}
 		}
 	}
 
@@ -45,6 +52,8 @@ func main() {
 				PPS: pps,
 				TimeScale: timeScale,
 				W: outfile,
+				Width: VideoWidth,
+				Height: VideoHeight,
 			}
 			//log.Println("SPS:\n"+hex.Dump(sps), "\nPPS:\n"+hex.Dump(pps))
 		}

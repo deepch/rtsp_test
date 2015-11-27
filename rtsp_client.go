@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	b64 "encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -377,6 +378,23 @@ func ParseMedia(header string) []string {
 				paste = striped[len(striped)-1]
 			}
 			letters = append(letters, paste)
+		}
+
+		dimensionsPrefix := "a=x-dimensions:"
+		if strings.HasPrefix(element, dimensionsPrefix) {
+			dims := []int{}
+			for _, s := range(strings.Split(element[len(dimensionsPrefix):], ",")) {
+				v := 0
+				fmt.Sscanf(s, "%d", &v)
+				if v <= 0 {
+					break
+				}
+				dims = append(dims, v)
+			}
+			if len(dims) == 2 {
+				VideoWidth = dims[0]
+				VideoHeight = dims[1]
+			}
 		}
 	}
 	return letters
