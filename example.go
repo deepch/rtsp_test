@@ -129,14 +129,14 @@ func main() {
 						isStart := data[4+rtphdr+1]&0x80 != 0
 						isEnd := data[4+rtphdr+1]&0x40 != 0
 						nalType := data[4+rtphdr+1]&0x1F
-						nri := (data[4+rtphdr+1]&0x60)>>5
-
+						//nri := (data[4+rtphdr+1]&0x60)>>5
+						nal := data[4+rtphdr]&0xE0 | data[4+rtphdr+1]&0x1F
 						if isStart {
 							fuBuffer = []byte{0}
 						}
 						fuBuffer = append(fuBuffer, data[4+rtphdr+2:]...)
 						if isEnd {
-							fuBuffer[0] = nalType|(nri<<5)|0x80
+							fuBuffer[0] = nal
 							handleNALU(nalType, fuBuffer, ts)
 						}
 					}
