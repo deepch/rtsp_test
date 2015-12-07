@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/nareix/mp4"
+	mpegts "github.com/nareix/ts"
 )
 
 var (
@@ -34,7 +35,10 @@ func main() {
 	var lastNALU *NALU
 
 	var mp4w *mp4.SimpleH264Writer
-	outfile, _ := os.Create("out.mp4")
+	var tsw *mpegts.SimpleH264Writer
+
+	outfileMp4, _ := os.Create("out.mp4")
+	outfileTs, _ := os.Create("out.ts")
 
 	endWriteNALU := func() {
 		log.Println("finish write")
@@ -43,6 +47,7 @@ func main() {
 				panic(err)
 			}
 		}
+		outfileTs.Close()
 	}
 
 	writeNALU := func(sync bool, ts int, payload []byte) {
@@ -51,11 +56,17 @@ func main() {
 				SPS: sps,
 				PPS: pps,
 				TimeScale: timeScale,
-				W: outfile,
-				Width: VideoWidth,
-				Height: VideoHeight,
+				W: outfileMp4,
 			}
 			//log.Println("SPS:\n"+hex.Dump(sps), "\nPPS:\n"+hex.Dump(pps))
+		}
+		if tsw == nil {
+			tsw = &mpegts.SimpleH264Writer{
+				TimeScale: timeScale,
+				W: outfileTs,
+				SPS: sps,
+				PPS: pps,
+			}
 		}
 		curNALU := &NALU{
 			ts: ts,
@@ -64,7 +75,12 @@ func main() {
 		}
 		if lastNALU != nil {
 			log.Println("write", lastNALU.sync, len(lastNALU.data))
+
 			if err := mp4w.WriteNALU(lastNALU.sync, curNALU.ts - lastNALU.ts, lastNALU.data); err != nil {
+				panic(err)
+			}
+
+			if err := tsw.WriteNALU(lastNALU.sync, curNALU.ts - lastNALU.ts, lastNALU.data); err != nil {
 				panic(err)
 			}
 		}
@@ -83,7 +99,7 @@ func main() {
 		} else if nalType == 5 {
 			// keyframe
 			syncCount++
-			if syncCount == 5 {
+			if syncCount == 4 {
 				quit = true
 			}
 			writeNALU(true, int(ts), payload)
