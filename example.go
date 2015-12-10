@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"os"
+	"encoding/gob"
+	"flag"
 
 	"github.com/nareix/mp4"
 	mpegts "github.com/nareix/ts"
@@ -13,7 +15,30 @@ var (
 	VideoHeight int
 )
 
+type GobAllSamples struct {
+	TimeScale int
+	SPS []byte
+	PPS []byte
+	Samples []GobSample
+}
+
+type GobSample struct {
+	Duration int
+	Data []byte
+	Sync bool
+}
+
 func main() {
+	var saveGob bool
+	var url string
+	var maxgop int
+
+	// rtsp://admin:123456@171.25.235.18/mpeg4
+	flag.BoolVar(&saveGob, "s", false, "save to gob file")
+	flag.IntVar(&maxgop, "g", 4, "max gop recording")
+	flag.StringVar(&url, "url", "rtsp://admin:123456@94.242.52.34:5543/mpeg4cif", "")
+	flag.Parse()
+
 	RtspReader := RtspClientNew()
 
 	quit := false
@@ -37,6 +62,8 @@ func main() {
 	var mp4w *mp4.SimpleH264Writer
 	var tsw *mpegts.SimpleH264Writer
 
+	var allSamples *GobAllSamples
+
 	outfileMp4, _ := os.Create("out.mp4")
 	outfileTs, _ := os.Create("out.ts")
 
@@ -48,9 +75,23 @@ func main() {
 			}
 		}
 		outfileTs.Close()
+
+		if saveGob {
+			file, _ := os.Create("out.gob")
+			enc := gob.NewEncoder(file)
+			enc.Encode(allSamples)
+			file.Close()
+		}
 	}
 
 	writeNALU := func(sync bool, ts int, payload []byte) {
+		if saveGob && allSamples == nil {
+			allSamples = &GobAllSamples{
+				SPS: sps,
+				PPS: pps,
+				TimeScale: timeScale,
+			}
+		}
 		if mp4w == nil {
 			mp4w = &mp4.SimpleH264Writer{
 				SPS: sps,
@@ -73,6 +114,7 @@ func main() {
 			sync: sync,
 			data: payload,
 		}
+
 		if lastNALU != nil {
 			log.Println("write", lastNALU.sync, len(lastNALU.data))
 
@@ -82,6 +124,14 @@ func main() {
 
 			if err := tsw.WriteNALU(lastNALU.sync, curNALU.ts - lastNALU.ts, lastNALU.data); err != nil {
 				panic(err)
+			}
+
+			if saveGob {
+				allSamples.Samples = append(allSamples.Samples, GobSample{
+					Sync: lastNALU.sync,
+					Duration: curNALU.ts - lastNALU.ts,
+					Data: lastNALU.data,
+				})
 			}
 		}
 		lastNALU = curNALU
@@ -99,7 +149,7 @@ func main() {
 		} else if nalType == 5 {
 			// keyframe
 			syncCount++
-			if syncCount == 4 {
+			if syncCount == maxgop {
 				quit = true
 			}
 			writeNALU(true, int(ts), payload)
@@ -111,7 +161,7 @@ func main() {
 		}
 	}
 
-	if status, message := RtspReader.Client("rtsp://admin:123456@94.242.52.34:5543/mpeg4cif"); status {
+	if status, message := RtspReader.Client(url); status {
 		log.Println("connected")
 		i := 0
 		for {
