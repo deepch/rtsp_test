@@ -101,14 +101,6 @@ func main() {
 			}
 			//log.Println("SPS:\n"+hex.Dump(sps), "\nPPS:\n"+hex.Dump(pps))
 		}
-		if tsw == nil {
-			tsw = &mpegts.SimpleH264Writer{
-				TimeScale: timeScale,
-				W: outfileTs,
-				SPS: sps,
-				PPS: pps,
-			}
-		}
 		curNALU := &NALU{
 			ts: ts,
 			sync: sync,
@@ -122,6 +114,16 @@ func main() {
 				panic(err)
 			}
 
+			if tsw == nil {
+				tsw = &mpegts.SimpleH264Writer{
+					TimeScale: timeScale,
+					W: outfileTs,
+					SPS: sps,
+					PPS: pps,
+					PCR: uint64(lastNALU.ts),
+					PTS: uint64(lastNALU.ts),
+				}
+			}
 			if err := tsw.WriteNALU(lastNALU.sync, curNALU.ts - lastNALU.ts, lastNALU.data); err != nil {
 				panic(err)
 			}
