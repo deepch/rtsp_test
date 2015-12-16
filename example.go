@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"encoding/gob"
+	"encoding/hex"
 	"flag"
 
 	"github.com/nareix/mp4"
@@ -33,7 +34,11 @@ func main() {
 	var url string
 	var maxgop int
 
-	// rtsp://admin:123456@171.25.235.18/mpeg4
+	// with aac rtsp://admin:123456@80.254.21.110:554/mpeg4cif
+	// with aac rtsp://admin:123456@95.31.251.50:5050/mpeg4cif
+	// 1808p rtsp://admin:123456@171.25.235.18/mpeg4
+	// 640x360 rtsp://admin:123456@94.242.52.34:5543/mpeg4cif
+
 	flag.BoolVar(&saveGob, "s", false, "save to gob file")
 	flag.IntVar(&maxgop, "g", 4, "max gop recording")
 	flag.StringVar(&url, "url", "rtsp://admin:123456@94.242.52.34:5543/mpeg4cif", "")
@@ -120,8 +125,8 @@ func main() {
 					W: outfileTs,
 					SPS: sps,
 					PPS: pps,
-					PCR: uint64(lastNALU.ts),
-					PTS: uint64(lastNALU.ts),
+					PCR: int64(lastNALU.ts),
+					PTS: int64(lastNALU.ts),
 				}
 			}
 			if err := tsw.WriteNALU(lastNALU.sync, curNALU.ts - lastNALU.ts, lastNALU.data); err != nil {
@@ -174,6 +179,11 @@ func main() {
 			}
 			select {
 			case data := <-RtspReader.outgoing:
+
+				if true {
+					log.Printf("packet [0]=%x type=%d\n", data[0], data[1])
+				}
+
 				//log.Println("packet recive")
 				if data[0] == 36 && data[1] == 0 {
 					cc := data[4] & 0xF
@@ -209,6 +219,14 @@ func main() {
 						}
 					}
 
+				} else if data[0] == 36 && data[1] == 1 {
+					// audio
+
+					cc := data[4] & 0xF
+					rtphdr := 12 + cc*4
+					payload := data[4+rtphdr:]
+
+					log.Print("audio payload\n", hex.Dump(payload))
 				}
 
 			case <-RtspReader.signals:

@@ -370,6 +370,11 @@ func ParseMedia(header string) []string {
 	letters := []string{}
 	mparsed := strings.Split(header, "\r\n")
 	paste := ""
+
+	if true {
+		log.Println("headers", header)
+	}
+
 	for _, element := range mparsed {
 		if strings.Contains(element, "a=control:") && !strings.Contains(element, "*") && strings.Contains(element, "tra") {
 			paste = element[10:]
