@@ -119,7 +119,37 @@ func (this *RtspClient) Client(rtsp_url string) (bool, string) {
 	} else {
 		this.session = ParseSession(message)
 	}
-	//PHASE 4 SETUP
+	if len(this.track) > 1 {
+		if !this.Write("SETUP " + this.uri + "/" + this.track[1] + " RTSP/1.0\r\nCSeq: " + strconv.Itoa(this.cseq) + "\r\nTransport: RTP/AVP/TCP;unicast;interleaved=1-2" + this.bauth + "\r\n\r\n") {
+			return false, ""
+		}
+		if status, message := this.Read(); !status {
+			return false, "Не возможно прочитать ответ SETUP соединение потеряно"
+	
+		} else if !strings.Contains(message, "200") {
+			if strings.Contains(message, "401") {
+				str := this.AuthDigest_Only("SETUP", message)
+				if !this.Write("SETUP " + this.uri + "/" + this.track[1] + " RTSP/1.0\r\nCSeq: " + strconv.Itoa(this.cseq) + "\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3" + this.bauth + str + "\r\n\r\n") {
+					return false, ""
+				}
+				if status, message := this.Read(); !status {
+					return false, "Не возможно прочитать ответ SETUP соединение потеряно"
+	
+				} else if !strings.Contains(message, "200") {
+	
+					return false, "Ошибка SETUP not status code 200 OK " + message
+	
+				} else {
+					this.session = ParseSession(message)
+				}
+			} else {
+				return false, "Ошибка SETUP not status code 200 OK " + message
+			}
+		} else {
+			this.session = ParseSession(message)
+		}
+	}
+	//PHASE 4 PLAY
 	if !this.Write("PLAY " + this.uri + " RTSP/1.0\r\nCSeq: " + strconv.Itoa(this.cseq) + "\r\nSession: " + this.session + this.bauth + "\r\n\r\n") {
 		return false, ""
 	}
@@ -191,7 +221,7 @@ func (this *RtspClient) RtspRtpLoop() {
 		if _, err := io.ReadFull(this.socket, header); err != nil {
 			return
 		}
-		if header[0] != 36 && header[1] != 0 {
+		if header[0] != 36 && (header[1] != 0 || header[1] != 1) {
 			for {
 				if n, err := io.ReadFull(this.socket, sync_b); err != nil && n != 1 {
 					return
