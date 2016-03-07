@@ -4,7 +4,6 @@ import (
 	"log"
 	"os"
 	"encoding/gob"
-	"encoding/hex"
 	"flag"
 
 	"github.com/nareix/mp4"
@@ -24,6 +23,7 @@ type GobAllSamples struct {
 }
 
 type GobSample struct {
+	Type int
 	Duration int
 	Data []byte
 	Sync bool
@@ -53,10 +53,6 @@ func main() {
 	fuBuffer := []byte{}
 	syncCount := 0
 
-	// rtp timestamp: 90 kHz clock rate
-	// 1 sec = timestamp 90000
-	timeScale := 90000
-
 	type NALU struct {
 		ts int
 		data []byte
@@ -64,8 +60,16 @@ func main() {
 	}
 	var lastNALU *NALU
 
+	type AACFrame struct {
+		ts int64
+		data []byte
+	}
+	var lastAACFrame *AACFrame
+
 	var mp4w *mp4.SimpleH264Writer
-	var tsw *mpegts.SimpleH264Writer
+	var tsmux *mpegts.Muxer
+	var tsH264Track *mpegts.Track
+	var tsAACTrack *mpegts.Track
 
 	var allSamples *GobAllSamples
 
@@ -94,14 +98,14 @@ func main() {
 			allSamples = &GobAllSamples{
 				SPS: sps,
 				PPS: pps,
-				TimeScale: timeScale,
+				TimeScale: 90000,
 			}
 		}
 		if mp4w == nil {
 			mp4w = &mp4.SimpleH264Writer{
 				SPS: sps,
 				PPS: pps,
-				TimeScale: timeScale,
+				TimeScale: 90000,
 				W: outfileMp4,
 			}
 			//log.Println("SPS:\n"+hex.Dump(sps), "\nPPS:\n"+hex.Dump(pps))
@@ -113,23 +117,33 @@ func main() {
 		}
 
 		if lastNALU != nil {
-			log.Println("write", lastNALU.sync, len(lastNALU.data))
+			if false {
+				log.Println("write", lastNALU.sync, len(lastNALU.data))
+			}
 
 			if err := mp4w.WriteNALU(lastNALU.sync, curNALU.ts - lastNALU.ts, lastNALU.data); err != nil {
 				panic(err)
 			}
 
-			if tsw == nil {
-				tsw = &mpegts.SimpleH264Writer{
-					TimeScale: timeScale,
+			if tsmux == nil {
+				tsmux = &mpegts.Muxer{
 					W: outfileTs,
-					SPS: sps,
-					PPS: pps,
-					PCR: int64(lastNALU.ts),
-					PTS: int64(lastNALU.ts),
+				}
+				tsH264Track = tsmux.AddH264Track()
+				tsH264Track.SPS = sps
+				tsH264Track.PPS = pps
+				tsH264Track.TimeScale = 90000
+				//tsH264Track.PCR = int64(lastNALU.ts)
+				//tsH264Track.PTS = int64(lastNALU.ts)
+				if audioConfig != nil {
+					tsAACTrack = tsmux.AddAACTrack()
+					tsAACTrack.TimeScale = 16000
+				}
+				if err := tsmux.WriteHeader(); err != nil {
+					panic(err)
 				}
 			}
-			if err := tsw.WriteNALU(lastNALU.sync, curNALU.ts - lastNALU.ts, lastNALU.data); err != nil {
+			if err := tsH264Track.WriteH264NALU(lastNALU.sync, curNALU.ts - lastNALU.ts, lastNALU.data); err != nil {
 				panic(err)
 			}
 
@@ -168,6 +182,26 @@ func main() {
 		}
 	}
 
+	handleAACFrame := func(frame []byte, ts int64) {
+		if tsAACTrack == nil {
+			return
+		}
+		curAACFrame := &AACFrame{
+			ts: ts,
+			data: frame,
+		}
+		if lastAACFrame == nil {
+			//tsAACTrack.PCR = int64(ts)
+			//tsAACTrack.PTS = int64(ts)
+		} else {
+			duration := curAACFrame.ts - lastAACFrame.ts
+			if err := tsAACTrack.WriteADTSAACFrame(int(duration), lastAACFrame.data); err != nil {
+				panic(err)
+			}
+		}
+		lastAACFrame = curAACFrame
+	}
+
 	if status, message := RtspReader.Client(url); status {
 		log.Println("connected")
 		i := 0
@@ -181,7 +215,7 @@ func main() {
 			case data := <-RtspReader.outgoing:
 
 				if true {
-					log.Printf("packet [0]=%x type=%d\n", data[0], data[1])
+					log.Printf("packet type=%d len=%d\n", data[1], len(data))
 				}
 
 				//log.Println("packet recive")
@@ -219,14 +253,16 @@ func main() {
 						}
 					}
 
-				} else if data[0] == 36 && data[1] == 1 {
+				} else if data[0] == 36 && data[1] == 2 {
 					// audio
-
 					cc := data[4] & 0xF
 					rtphdr := 12 + cc*4
-					payload := data[4+rtphdr:]
+					//packet time
+					ts := (int64(data[8]) << 24) + (int64(data[9]) << 16) + (int64(data[10]) << 8) + (int64(data[11]))
 
-					log.Print("audio payload\n", hex.Dump(payload))
+					payload := data[4+rtphdr:]
+					frame := ParseAUFrame(payload, *audioConfig)
+					handleAACFrame(frame, ts)
 				}
 
 			case <-RtspReader.signals:

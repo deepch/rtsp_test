@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"bytes"
 	"log"
 	"net"
 	"net/url"
@@ -90,6 +91,9 @@ func (this *RtspClient) Client(rtsp_url string) (bool, string) {
 	} else {
 		this.track = ParseMedia(message)
 	}
+
+	log.Println("SETUP", this.track)
+
 	//PHASE 3 SETUP
 	if !this.Write("SETUP " + this.uri + "/" + this.track[0] + " RTSP/1.0\r\nCSeq: " + strconv.Itoa(this.cseq) + "\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1" + this.bauth + "\r\n\r\n") {
 		return false, ""
@@ -119,7 +123,19 @@ func (this *RtspClient) Client(rtsp_url string) (bool, string) {
 	} else {
 		this.session = ParseSession(message)
 	}
-	//PHASE 4 SETUP
+
+	if len(this.track) > 1 {
+		if !this.Write("SETUP " + this.uri + "/" + this.track[1] + " RTSP/1.0\r\nCSeq: " + strconv.Itoa(this.cseq) + "\r\nSession: " + this.session + "\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3" + this.bauth + "\r\n\r\n") {
+			return false, ""
+		}
+		if status, message := this.Read(); !status {
+			return false, "Не возможно прочитать ответ PLAY соединение потеряно"
+		} else if !strings.Contains(message, "200") {
+			return false, "Ошибка PLAY not status code 200 OK " + message
+		}
+	}
+
+	//PHASE 4 PLAY
 	if !this.Write("PLAY " + this.uri + " RTSP/1.0\r\nCSeq: " + strconv.Itoa(this.cseq) + "\r\nSession: " + this.session + this.bauth + "\r\n\r\n") {
 		return false, ""
 	}
@@ -222,7 +238,6 @@ func (this *RtspClient) RtspRtpLoop() {
 		}
 
 		payloadLen := (int)(header[2])<<8+(int)(header[3])
-		//log.Println("payloadLen", payloadLen)
 		if n, err := io.ReadFull(this.socket, payload[:payloadLen]); err != nil {
 			return
 		} else {
@@ -366,6 +381,9 @@ func ParseSession(header string) string {
 	}
 	return ""
 }
+
+var audioConfig *Mpeg4AudioConfig
+
 func ParseMedia(header string) []string {
 	letters := []string{}
 	mparsed := strings.Split(header, "\r\n")
@@ -375,6 +393,8 @@ func ParseMedia(header string) []string {
 		log.Println("headers", header)
 	}
 
+	currentMap := ""
+
 	for _, element := range mparsed {
 		if strings.Contains(element, "a=control:") && !strings.Contains(element, "*") && strings.Contains(element, "tra") {
 			paste = element[10:]
@@ -383,6 +403,34 @@ func ParseMedia(header string) []string {
 				paste = striped[len(striped)-1]
 			}
 			letters = append(letters, paste)
+		}
+
+		if prefix := "m="; strings.HasPrefix(element, prefix) {
+			a := strings.Split(element[len(prefix):], " ")
+			currentMap = a[0]
+		}
+
+		// a=fmtp:96 streamtype=5;profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3;config=1408
+		if prefix := "a=fmtp:"; currentMap == "audio" && strings.HasPrefix(element, prefix) {
+			a := strings.Split(element, " ")
+			audioConfig = &Mpeg4AudioConfig{}
+			if len(a) > 1 {
+				for _, v := range strings.Split(a[1], ";") {
+					a := strings.Split(v, "=")
+					if len(a) == 2 {
+						switch a[0] {
+						case "config":
+							data, _ := hex.DecodeString(a[1])
+							br := bytes.NewReader(data)
+							ParseAudioSpecificConfig(br, audioConfig)
+						case "sizelength":
+							fmt.Sscanf(a[1], "%d", &audioConfig.SizeLength)
+						case "indexlength":
+							fmt.Sscanf(a[1], "%d", &audioConfig.IndexLength)
+						}
+					}
+				}
+			}
 		}
 
 		dimensionsPrefix := "a=x-dimensions:"
@@ -401,6 +449,7 @@ func ParseMedia(header string) []string {
 				VideoHeight = dims[1]
 			}
 		}
+
 	}
 	return letters
 }
