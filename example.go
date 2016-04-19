@@ -54,20 +54,22 @@ func main() {
 	fuBuffer := []byte{}
 	syncCount := 0
 
-	var mp4w *mp4.Muxer
+	var mp4mux *mp4.Muxer
 	var tsmux *mpegts.Muxer
+	var mp4H264Track *mp4.Track
+	var mp4AACTrack *mp4.Track
 	var tsH264Track *mpegts.Track
 	var tsAACTrack *mpegts.Track
 
 	var allSamples *GobAllSamples
 
-	//outfileMp4, _ := os.Create("out.mp4")
+	outfileMp4, _ := os.Create("out.mp4")
 	outfileTs, _ := os.Create("out.ts")
 
 	endWriteNALU := func() {
 		log.Println("finish write")
-		if mp4w != nil {
-			if err := mp4w.WriteTrailer(); err != nil {
+		if mp4mux != nil {
+			if err := mp4mux.WriteTrailer(); err != nil {
 				panic(err)
 			}
 		}
@@ -90,27 +92,27 @@ func main() {
 			}
 		}
 
-		/*
-		if mp4w == nil {
-			mp4w = &mp4.Muxer{
-				SPS: sps,
-				PPS: pps,
-				TimeScale: 90000,
-				W: outfileMp4,
-			}
-			//log.Println("SPS:\n"+hex.Dump(sps), "\nPPS:\n"+hex.Dump(pps))
-		}
-		*/
-
 		if false {
 			log.Println("write", sync, len(payload))
 		}
 
-		/*
-		if err := mp4w.WriteNALU(lastNALU.sync, curNALU.ts - lastNALU.ts, lastNALU.data); err != nil {
-			panic(err)
+		if mp4mux == nil {
+			mp4mux = &mp4.Muxer{
+				W: outfileMp4,
+			}
+			mp4H264Track = mp4mux.AddH264Track()
+			mp4H264Track.SetH264PPSAndSPS(pps, sps)
+			mp4H264Track.SetTimeScale(90000)
+
+			if audioConfig != nil {
+				mp4AACTrack = mp4mux.AddAACTrack()
+				mp4AACTrack.SetTimeScale(16000)
+			}
+
+			if err := mp4mux.WriteHeader(); err != nil {
+				panic(err)
+			}
 		}
-		*/
 
 		if tsmux == nil {
 			tsmux = &mpegts.Muxer{
@@ -134,7 +136,11 @@ func main() {
 		if true {
 			log.Println("writeH264", ts, hex.Dump(payload[:10]))
 		}
+
 		if err := tsH264Track.WriteSample(int64(ts), int64(ts), sync, payload); err != nil {
+			panic(err)
+		}
+		if err := mp4H264Track.WriteSample(int64(ts), int64(ts), sync, payload); err != nil {
 			panic(err)
 		}
 
@@ -172,11 +178,15 @@ func main() {
 	}
 
 	handleAACFrame := func(frame []byte, ts int64) {
-		if tsAACTrack == nil {
-			return
+		if tsAACTrack != nil {
+			if err := tsAACTrack.WriteSample(ts, ts, true, frame); err != nil {
+				panic(err)
+			}
 		}
-		if err := tsAACTrack.WriteSample(ts, ts, true, frame); err != nil {
-			panic(err)
+		if mp4AACTrack != nil {
+			if err := mp4AACTrack.WriteSample(ts, ts, true, frame); err != nil {
+				panic(err)
+			}
 		}
 	}
 
