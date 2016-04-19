@@ -344,8 +344,12 @@ func (this *RtspClient) ParseUrl(rtsp_url string) bool {
 	} else {
 		this.port = "554"
 	}
-	this.login = u.User.Username()
-	this.password, this.auth = u.User.Password()
+
+	if u.User != nil {
+		this.login = u.User.Username()
+		this.password, this.auth = u.User.Password()
+	}
+
 	if u.RawQuery != "" {
 		this.uri = "rtsp://" + this.host + ":" + this.port + u.Path + "?" + string(u.RawQuery)
 	} else {
