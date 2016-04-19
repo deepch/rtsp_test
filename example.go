@@ -134,9 +134,8 @@ func main() {
 		}
 
 		if true {
-			log.Println("writeH264", ts, hex.Dump(payload[:10]))
+			log.Println("writeH264", ts, "\n"+hex.Dump(payload[:10]))
 		}
-
 		if err := tsH264Track.WriteSample(int64(ts), int64(ts), sync, payload); err != nil {
 			panic(err)
 		}
@@ -153,7 +152,14 @@ func main() {
 		}
 	}
 
+	var firstAACTs, firstH264Ts int64
+
 	handleNALU := func(nalType byte, payload []byte, ts int64) {
+		if firstH264Ts == 0 {
+			firstH264Ts = ts
+		}
+		ts -= firstH264Ts
+
 		if nalType == 7 {
 			if len(sps) == 0 {
 				sps = payload
@@ -178,6 +184,15 @@ func main() {
 	}
 
 	handleAACFrame := func(frame []byte, ts int64) {
+		if firstAACTs == 0 {
+			firstAACTs = ts
+		}
+		ts -= firstAACTs
+
+		if true {
+			log.Println("writeAAC", ts, len(frame))
+		}
+
 		if tsAACTrack != nil {
 			if err := tsAACTrack.WriteSample(ts, ts, true, frame); err != nil {
 				panic(err)
