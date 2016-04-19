@@ -184,16 +184,17 @@ func main() {
 	}
 
 	handleAACFrame := func(frame []byte, ts int64) {
-		if firstAACTs == 0 {
-			firstAACTs = ts
-		}
-		ts -= firstAACTs
+	
 
 		if true {
 			log.Println("writeAAC", ts, len(frame))
 		}
 
 		if tsAACTrack != nil {
+			if firstAACTs == 0 {
+				firstAACTs = ts
+			}
+			ts -= firstAACTs
 			if err := tsAACTrack.WriteSample(ts, ts, true, frame); err != nil {
 				panic(err)
 			}
